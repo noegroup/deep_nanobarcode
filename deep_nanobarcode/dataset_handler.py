@@ -187,16 +187,17 @@ class NanobarcodeDataset:
             protein_ind = self.brightness_data[protein_name]["ID"]
 
             data = self.brightness_data[protein_name]["data"].copy().transpose().astype(np.float32)
-            target = np.repeat(protein_ind, data.shape[0], axis=0).astype(np.long)
+            target = np.repeat(protein_ind, data.shape[0], axis=0).astype(np.int_)
 
             random_choice = self.random.random(data.shape[0])
 
-            filter = {"train" : random_choice < split_crit[0],
-                      "val" : (random_choice >= split_crit[0]) * (random_choice < split_crit[1]),
-                      "test" : random_choice >= split_crit[1]}
+            _filter = {"train": random_choice < split_crit[0],
+                       "val": (random_choice >= split_crit[0]) * (random_choice < split_crit[1]),
+                       "test": random_choice >= split_crit[1]}
 
             for _type in ["train", "val", "test"]:
                 dataset[_type]["input"], dataset[_type]["target"] = \
-                    self.append_to_dataset(dataset[_type]["input"], dataset[_type]["target"], data, target, filter[_type])
+                    self.append_to_dataset(dataset[_type]["input"],
+                                           dataset[_type]["target"], data, target, _filter[_type])
 
         return dataset

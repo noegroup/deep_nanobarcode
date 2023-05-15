@@ -46,8 +46,6 @@ class NanobarcodeClassifierNet(nn.Module):
 
         self.resnet_stride = resnet_stride
 
-        #         self.batch_norm_0 = nn.BatchNorm1d(num_features=input_shape)
-
         self.initial_layers = nn.ModuleList()
 
         mid_width = (input_shape + width) // 2
@@ -96,8 +94,6 @@ class NanobarcodeClassifierNet(nn.Module):
         self.identity = nn.Identity()
 
     def forward(self, x, **kwargs):
-
-        #         x = self.batch_norm_0(x)
 
         for _lay in self.initial_layers:
             x = _lay(x, **kwargs)

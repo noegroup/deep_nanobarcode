@@ -27,6 +27,7 @@ dependencies = [
 		"jupyter",
 		"tifffile",
 		"scikit-image",
+		"scikit-learn",
 		"tqdm",
 		"ipyvtklink",
 		"torch"

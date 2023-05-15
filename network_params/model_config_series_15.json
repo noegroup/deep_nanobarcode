@@ -1,0 +1,12 @@
+{
+    "width": 128,
+    "n_middle_layers": 3,
+    "resnet_stride": 3,
+    "cardinality": 4,
+    "batch_size": 458,
+    "lr": 0.00014860544347674695,
+    "use_resnet": true,
+    "use_dropout": false,
+    "dropout_rate": 0.2,
+    "use_bn": true
+}
