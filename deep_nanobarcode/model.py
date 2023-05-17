@@ -45,8 +45,8 @@ def model_factory(nanobarcode_dataset, model_args, training_args):
                                                shuffle=True, drop_last=True)
 
     val_loader = torch.utils.data.DataLoader(nanobarcode_dataset.val_set,
-                                               batch_size=training_args["batch_size"],
-                                               shuffle=True, drop_last=True)
+                                             batch_size=training_args["batch_size"],
+                                             shuffle=True, drop_last=True)
 
     test_loader = torch.utils.data.DataLoader(nanobarcode_dataset.test_set,
                                               batch_size=training_args["batch_size"],
@@ -144,13 +144,14 @@ def separate_args(args):
 
     lr = model_args.pop("lr", None)
     batch_size = model_args.pop("batch_size", None)
+    num_data_workers = model_args.pop("num_data_workers", None)
 
-    training_args.update([('lr', lr), ('batch_size', batch_size)])
+    training_args.update([('lr', lr), ('batch_size', batch_size), ('num_data_workers', num_data_workers)])
 
     return model_args, training_args
 
 
-def hyperparam_optim_objective(args, loss_function, n_proteins):
+def hyperparameter_optim_objective(args, loss_function, n_proteins):
 
     net, train_loader, val_loader, test_loader, optimizer = model_factory(*separate_args(args))
 

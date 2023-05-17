@@ -91,28 +91,26 @@ class NanobarcodeClassifierNet(nn.Module):
                                                             use_bn=False, num_features=output_shape))
         self.final_layers.append(nn.Linear(output_shape, output_shape, bias=True))
 
-        self.identity = nn.Identity()
-
     def forward(self, x, **kwargs):
 
         for _lay in self.initial_layers:
             x = _lay(x, **kwargs)
 
-        y = self.identity(x)
+        y0 = x
 
         for block in self.middle_layers[0]:
-            y = block(y, **kwargs)
+            y0 = block(y0, **kwargs)
 
-        z = self.identity(y)
+        z = y0
 
         for branch in self.middle_layers[1:]:
 
-            y = self.identity(x)
+            y = x
 
             for block in branch:
                 y = block(y, **kwargs)
 
-            z = torch.add(z, y)
+            z = z + y
 
         for _lay in self.final_layers:
             z = _lay(z, **kwargs)
@@ -164,7 +162,10 @@ def feed_to_network_and_optimize_scaling(net, image_slice_scaled, n_optim_iter):
 
     net.eval()
 
+    _require_grad_list = []
+
     for _param in net.parameters():
+        _require_grad_list.append(_param.requires_grad)
         _param.requires_grad = False
 
     input_data = torch.from_numpy(_im).float().to(nc.nn_device)
@@ -194,5 +195,8 @@ def feed_to_network_and_optimize_scaling(net, image_slice_scaled, n_optim_iter):
         predicted = normalizing_layer(raw_output)
 
         entropy = torch.mean(torch.sum(-predicted * torch.log(predicted + 1.0e-16), dim=1))
+
+    for _param, _rg in zip(net.parameters(), _require_grad_list):
+        _param.requires_grad = _rg
 
     return predicted.cpu().numpy(), entropy.cpu().numpy(), entropy_list

@@ -61,37 +61,55 @@ def scale_image(image, scaling="fixed"):
         raise ValueError("Type of dataset scaling is unknown!")
 
 
-def kpca_separate(image, threshold=0.75):
+class KPCASeparate(object):
 
-    model = KernelPCA(n_components=2,
-                      kernel='cosine', gamma=None, degree=3, coef0=1,
-                      kernel_params=None, alpha=1.0,
-                      fit_inverse_transform=False,
-                      eigen_solver='auto', tol=0, max_iter=None,
-                      iterated_power='auto', remove_zero_eig=False,
-                      random_state=None, copy_X=True, n_jobs=None)
+    def __init__(self, image, threshold=0.75):
 
-    if len(image.shape) != 3:
-        raise ValueError("Image dimensions should be 3: (channel, X, Y)!")
+        self.model = KernelPCA(n_components=2,
+                               kernel='cosine', gamma=None, degree=3, coef0=1,
+                               kernel_params=None, alpha=1.0,
+                               fit_inverse_transform=False,
+                               eigen_solver='auto', tol=0, max_iter=None,
+                               iterated_power='auto', remove_zero_eig=False,
+                               random_state=None, copy_X=True, n_jobs=None)
 
-    n_channels = image.shape[0]
-    image_dim = image.shape[1:3]
+        self.threshold = threshold
 
-    image_wt = (image.copy() - np.mean(image)) / np.std(image)
+        if image.ndim not in [3, 4]:
+            raise ValueError("Image dimensions should be either 3: (channel, X, Y) or 4: (z-stack, channel, X, Y)!")
 
-    all_pixels = image_wt.reshape((n_channels, -1))
+        if image.ndim == 3:
+            image = image.reshape((1, *image.shape))
 
-    n_pixels = all_pixels.shape[1]
+        n_channels = image.shape[1]
 
-    x = all_pixels[:, np.random.randint(0, n_pixels, 6000)].T.copy()
-    y = model.fit_transform(x)
+        image_wt = (image.copy() - np.mean(image)) / np.std(image)
+        image_wt = np.transpose(image_wt, [1, 0, 2, 3])
 
-    y_min, y_max = np.amin(y[:, 0]), np.amax(y[:, 0])
+        all_pixels = image_wt.reshape((n_channels, -1))
 
-    segmented_pixels = model.transform(image_wt.reshape((n_channels, -1)).T)
-    binary_mask = ((segmented_pixels[:, 0] - y_min) > threshold * (y_max - y_min)).reshape(image_dim)
+        n_pixels = all_pixels.shape[1]
 
-    return binary_mask
+        x = all_pixels[:, np.random.randint(0, n_pixels, 6000)].T.copy()
+        y = self.model.fit_transform(x)
+        self.y_min, self.y_max = np.amin(y[:, 0]), np.amax(y[:, 0])
+
+    def __call__(self, image):
+
+        if image.ndim != 3:
+            raise ValueError("Image dimensions should be 3: (channel, X, Y)!")
+
+        n_channels = image.shape[0]
+        image_dim = image.shape[1:3]
+
+        image_wt = (image.copy() - np.mean(image)) / np.std(image)
+
+        segmented_pixels = self.model.transform(image_wt.reshape((n_channels, -1)).T)
+
+        binary_mask = ((segmented_pixels[:, 0] - self.y_min) > self.threshold *
+                       (self.y_max - self.y_min)).reshape(image_dim)
+
+        return binary_mask
 
 
 def get_cell_background(brightfield_image):
