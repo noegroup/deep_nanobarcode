@@ -91,17 +91,19 @@ class NanobarcodeClassifierNet(nn.Module):
                                                             use_bn=False, num_features=output_shape))
         self.final_layers.append(nn.Linear(output_shape, output_shape, bias=True))
 
+        self.identity = nn.Identity()
+
     def forward(self, x, **kwargs):
 
         for _lay in self.initial_layers:
             x = _lay(x, **kwargs)
 
-        y0 = x
+        y = self.identity(x)
 
         for block in self.middle_layers[0]:
-            y0 = block(y0, **kwargs)
+            y = block(y, **kwargs)
 
-        z = y0
+        z = self.identity(y)
 
         for branch in self.middle_layers[1:]:
 
@@ -110,7 +112,7 @@ class NanobarcodeClassifierNet(nn.Module):
             for block in branch:
                 y = block(y, **kwargs)
 
-            z = z + y
+            z = torch.add(z, y)
 
         for _lay in self.final_layers:
             z = _lay(z, **kwargs)

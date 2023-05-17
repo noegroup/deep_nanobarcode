@@ -34,50 +34,49 @@ channel_wavelength = [405.0, 405.0, 405.0, 405.0, 488.0, 488.0, 488.0, 561.0, 56
 n_channels = len(channel_wavelength)
 
 
-# class IterableDatasetAugmentor(torch.utils.data.IterableDataset):
-#     def __init__(self, dataset, augment=False, brightness_augmentation_factor=0.0):
-#         super(IterableDatasetAugmentor).__init__()
-#
-#         self.dataset = dataset
-#         self.augment = augment
-#         self.brightness_augmentation_scale = brightness_augmentation_factor
-#         self.start = 0
-#         self.end = len(self.dataset)
-#
-#     def augment_brightness(self, brightness_data):
-#
-#         contrast_scale = 1.0 + \
-#                          (2.0 * torch.rand(size=[1], device=nc.nn_device) - 1.0) * \
-#                          self.brightness_augmentation_scale
-#
-#         # brightness_data = (brightness_data - self.dataset_mean) * contrast_scale + self.dataset_mean
-#         return brightness_data * contrast_scale
-#
-#     def __iter__(self):
-#
-#         worker_info = torch.utils.data.get_worker_info()
-#
-#         if worker_info is None:  # single-process data loading, return the full iterator
-#             iter_start = self.start
-#             iter_end = self.end
-#         else:  # in a worker process
-#             # split workload
-#             per_worker = int(torch.math.ceil((self.end - self.start) / float(worker_info.num_workers)))
-#             worker_id = worker_info.id
-#             iter_start = self.start + worker_id * per_worker
-#             iter_end = min(iter_start + per_worker, self.end)
-#
-#         _dat = self.dataset[iter_start: iter_end]
-#
-#         if self.augment:
-#             return zip(map(self.augment_brightness, _dat[0]), _dat[1])
-#         else:
-#             return zip(_dat[0], _dat[1])
-#
-#
-#     def __len__(self):
-#
-#         return len(self.dataset)
+class IterableDatasetAugmentor(torch.utils.data.IterableDataset):
+    def __init__(self, dataset, augment=False, brightness_scaling_factor=0.0):
+        super(IterableDatasetAugmentor).__init__()
+
+        self.dataset = dataset
+
+        self.brightness_scaling_factor = brightness_scaling_factor
+
+        if augment:
+            self.transform = self.augment_brightness
+        else:
+            self.transform = self.do_not_augment
+
+        self.start = 0
+        self.end = len(self.dataset)
+
+    def do_not_augment(self, x):
+        return x
+
+    def augment_brightness(self, x):
+        return x * (1.0 + (2.0 * torch.rand(size=x.size(), device=nc.nn_device) - 1.0) * self.brightness_scaling_factor)
+
+    def __iter__(self):
+
+        worker_info = torch.utils.data.get_worker_info()
+
+        if worker_info is None:  # single-process data loading, return the full iterator
+            iter_start = self.start
+            iter_end = self.end
+        else:  # in a worker process
+            # split workload
+            per_worker = int(torch.math.ceil((self.end - self.start) / float(worker_info.num_workers)))
+            worker_id = worker_info.id
+            iter_start = self.start + worker_id * per_worker
+            iter_end = min(iter_start + per_worker, self.end)
+
+        _dat = self.dataset[iter_start: iter_end]
+
+        return zip(map(self.transform, _dat[0]), _dat[1])
+
+    def __len__(self):
+
+        return len(self.dataset)
 
 
 class DatasetAugmentor(torch.utils.data.Dataset):
@@ -92,7 +91,7 @@ class DatasetAugmentor(torch.utils.data.Dataset):
 
         if augment:
             self.transform = lambda x: x * (
-                        1.0 + (2.0 * torch.rand(size=x.size(), device=nc.nn_device) - 1.0) * brightness_scaling_factor)
+                    1.0 + (2.0 * torch.rand(size=x.size(), device=nc.nn_device) - 1.0) * brightness_scaling_factor)
 
         _sum = torch.zeros(n_channels).to(nc.nn_device)
         _sum2 = torch.zeros(n_channels).to(nc.nn_device)
@@ -127,7 +126,6 @@ class DatasetAugmentor(torch.utils.data.Dataset):
     def __len__(self):
 
         return len(self.dataset)
-
 
 
 class NanobarcodeDataset:

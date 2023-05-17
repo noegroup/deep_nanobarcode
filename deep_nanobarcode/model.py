@@ -27,6 +27,7 @@
 
 import torch
 import torch.optim as optim
+import torch.multiprocessing
 import numpy as np
 
 from . import network_components as nc
@@ -40,17 +41,22 @@ def model_factory(nanobarcode_dataset, model_args, training_args):
                                             output_shape=nanobarcode_dataset.n_proteins,
                                             **model_args).to(nc.nn_device)
 
+    torch.multiprocessing.set_start_method("spawn")
+
+    extra_kwarg = {}# {"num_workers": training_args["num_data_workers"]}
+
+    if isinstance(nanobarcode_dataset.train_set, dat.DatasetAugmentor):
+        extra_kwarg = {"shuffle": True, "drop_last": True}
+
     train_loader = torch.utils.data.DataLoader(nanobarcode_dataset.train_set,
                                                batch_size=training_args["batch_size"],
-                                               shuffle=True, drop_last=True)
+                                               **extra_kwarg)
 
     val_loader = torch.utils.data.DataLoader(nanobarcode_dataset.val_set,
-                                             batch_size=training_args["batch_size"],
-                                             shuffle=True, drop_last=True)
+                                             batch_size=training_args["batch_size"])
 
     test_loader = torch.utils.data.DataLoader(nanobarcode_dataset.test_set,
-                                              batch_size=training_args["batch_size"],
-                                              shuffle=True, drop_last=False)
+                                              batch_size=training_args["batch_size"])
 
     optimizer = optim.AdamW(net.parameters(), lr=training_args["lr"], amsgrad=True)
 
