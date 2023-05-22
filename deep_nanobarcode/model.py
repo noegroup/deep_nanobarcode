@@ -41,7 +41,7 @@ def model_factory(nanobarcode_dataset, model_args, training_args):
                                             output_shape=nanobarcode_dataset.n_proteins,
                                             **model_args).to(nc.nn_device)
 
-    torch.multiprocessing.set_start_method("spawn")
+    #torch.multiprocessing.set_start_method("spawn")
 
     extra_kwarg = {}# {"num_workers": training_args["num_data_workers"]}
 
@@ -65,7 +65,7 @@ def model_factory(nanobarcode_dataset, model_args, training_args):
 
 def calc_metrics(net, data_loader, n_classes, full_output=False):
 
-    confusion_matrix = np.zeros((n_classes, n_classes))
+    confusion_matrix = np.zeros((n_classes, n_classes), dtype=np.float64)
 
     net.eval()
 
@@ -81,6 +81,9 @@ def calc_metrics(net, data_loader, n_classes, full_output=False):
 
             for _t, _p in zip(target_data.cpu().numpy(), predicted.cpu().numpy()):
                 confusion_matrix[_p, _t] += 1.0
+
+    for i in range(confusion_matrix.shape[1]):
+        confusion_matrix[:, i] /= np.sum(confusion_matrix[:, i])
 
     true_positive = []
     false_positive = []

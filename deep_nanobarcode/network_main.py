@@ -167,7 +167,7 @@ def feed_to_network_and_optimize_scaling(net, image_slice_scaled, n_optim_iter):
     _require_grad_list = []
 
     for _param in net.parameters():
-        _require_grad_list.append(_param.requires_grad)
+        _require_grad_list.append((_param.requires_grad is True))
         _param.requires_grad = False
 
     input_data = torch.from_numpy(_im).float().to(nc.nn_device)
@@ -194,9 +194,11 @@ def feed_to_network_and_optimize_scaling(net, image_slice_scaled, n_optim_iter):
 
         raw_output = net(uber_net(input_data))
 
-        predicted = normalizing_layer(raw_output)
+        outputs = normalizing_layer(raw_output)
 
-        entropy = torch.mean(torch.sum(-predicted * torch.log(predicted + 1.0e-16), dim=1))
+        entropy = torch.mean(torch.sum(-outputs * torch.log(outputs + 1.0e-16), dim=1))
+
+        predicted = torch.round(outputs)
 
     for _param, _rg in zip(net.parameters(), _require_grad_list):
         _param.requires_grad = _rg

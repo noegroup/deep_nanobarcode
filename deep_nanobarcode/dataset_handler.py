@@ -91,7 +91,7 @@ class DatasetAugmentor(torch.utils.data.Dataset):
 
         if augment:
             self.transform = lambda x: x * (
-                    1.0 + (2.0 * torch.rand(size=x.size(), device=nc.nn_device) - 1.0) * brightness_scaling_factor)
+                    1.0 + (torch.rand(size=x.size(), device=nc.nn_device) - 0.5) * brightness_scaling_factor)
 
         _sum = torch.zeros(n_channels).to(nc.nn_device)
         _sum2 = torch.zeros(n_channels).to(nc.nn_device)
