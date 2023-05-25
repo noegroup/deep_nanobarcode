@@ -28,7 +28,8 @@
 import torch
 import numpy as np
 import pickle
-from . import network_components as nc
+
+from . import network_components
 
 channel_wavelength = [405.0, 405.0, 405.0, 405.0, 488.0, 488.0, 488.0, 561.0, 561.0, 633.0]
 n_channels = len(channel_wavelength)
@@ -54,7 +55,7 @@ class IterableDatasetAugmentor(torch.utils.data.IterableDataset):
         return x
 
     def augment_brightness(self, x):
-        return x * (1.0 + (2.0 * torch.rand(size=x.size(), device=nc.nn_device) - 1.0) * self.brightness_scaling_factor)
+        return x * (1.0 + (2.0 * torch.rand(size=x.size(), device=network_components.nn_device) - 1.0) * self.brightness_scaling_factor)
 
     def __iter__(self):
 
@@ -86,15 +87,13 @@ class DatasetAugmentor(torch.utils.data.Dataset):
         super(DatasetAugmentor, self).__init__()
 
         self.dataset = dataset
+        self.brightness_scaling_factor = brightness_scaling_factor
 
-        self.transform = lambda x: x
+        if not augment:
+            self.brightness_scaling_factor = 0.0
 
-        if augment:
-            self.transform = lambda x: x * (
-                    1.0 + (torch.rand(size=x.size(), device=nc.nn_device) - 0.5) * brightness_scaling_factor)
-
-        _sum = torch.zeros(n_channels).to(nc.nn_device)
-        _sum2 = torch.zeros(n_channels).to(nc.nn_device)
+        _sum = torch.zeros(n_channels).to(network_components.nn_device)
+        _sum2 = torch.zeros(n_channels).to(network_components.nn_device)
         _n = 0.0
 
         for data, target in self.dataset:
@@ -109,13 +108,17 @@ class DatasetAugmentor(torch.utils.data.Dataset):
         print(f"Standard deviation of the input data = {self.dataset_std}")
 
         data, target = self.dataset[0]
-        print(f"Example of augmented data = {self.transform(data), target}")
+        print(f"Example of augmented data = {DatasetAugmentor.augment_func(data, self.brightness_scaling_factor), target}")
+
+    @staticmethod
+    def augment_func(x, _scale):
+        return x * (1.0 + (torch.rand(size=x.size(), device=network_components.nn_device) - 0.5) * _scale)
 
     def __getitem__(self, index):
 
         brightness_data, target = self.dataset[index]
 
-        return self.transform(brightness_data), target
+        return DatasetAugmentor.augment_func(brightness_data, self.brightness_scaling_factor), target
 
     # def __getitems__(self, indices):
     #
@@ -205,8 +208,8 @@ class NanobarcodeDataset:
     @staticmethod
     def append_to_dataset(accum_input, accum_target, data, target, filter_ind):
 
-        filtered_data = torch.from_numpy(data[filter_ind, :].copy()).to(nc.nn_device)
-        filtered_target = torch.from_numpy(target[filter_ind].copy()).to(nc.nn_device)
+        filtered_data = torch.from_numpy(data[filter_ind, :].copy()).to(network_components.nn_device)
+        filtered_target = torch.from_numpy(target[filter_ind].copy()).to(network_components.nn_device)
 
         accum_input = torch.cat((accum_input, filtered_data), dim=0)
         accum_target = torch.cat((accum_target, filtered_target), dim=0)
@@ -219,8 +222,8 @@ class NanobarcodeDataset:
 
         for _type in ["train", "val", "test"]:
 
-            dataset[_type] = {"input": torch.empty((0, n_channels), dtype=torch.float32, device=nc.nn_device),
-                              "target": torch.empty(0, dtype=torch.long, device=nc.nn_device)}
+            dataset[_type] = {"input": torch.empty((0, n_channels), dtype=torch.float32, device=network_components.nn_device),
+                              "target": torch.empty(0, dtype=torch.long, device=network_components.nn_device)}
 
         split_crit = np.cumsum(train_val_test_split_frac)
 

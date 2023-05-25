@@ -26,44 +26,53 @@
 
 
 import torch
+import torch.nn as nn
 import torch.optim as optim
 import torch.multiprocessing
 import numpy as np
+import tifffile
 
-from . import network_components as nc
-from . import network_main as net_main
-from . import dataset_handler as dat
+from . import network_components
+from . import network_main
+from . import dataset_handler
+from . import image_processing
 
 
 def model_factory(nanobarcode_dataset, model_args, training_args):
 
-    net = net_main.NanobarcodeClassifierNet(input_shape=dat.n_channels,
-                                            output_shape=nanobarcode_dataset.n_proteins,
-                                            **model_args).to(nc.nn_device)
+    net = network_main.NanobarcodeClassifierNet(input_shape=dataset_handler.n_channels,
+                                                output_shape=nanobarcode_dataset.n_proteins,
+                                                **model_args).to(network_components.nn_device)
 
     #torch.multiprocessing.set_start_method("spawn")
 
-    extra_kwarg = {}# {"num_workers": training_args["num_data_workers"]}
+    extra_kwarg = {"shuffle": True, "drop_last": False}# {"num_workers": training_args["num_data_workers"]}
 
-    if isinstance(nanobarcode_dataset.train_set, dat.DatasetAugmentor):
-        extra_kwarg = {"shuffle": True, "drop_last": True}
+    train_data_loader = torch.utils.data.DataLoader(nanobarcode_dataset.train_set,
+                                                    batch_size=training_args["batch_size"],
+                                                    **extra_kwarg)
 
-    train_loader = torch.utils.data.DataLoader(nanobarcode_dataset.train_set,
-                                               batch_size=training_args["batch_size"],
-                                               **extra_kwarg)
+    val_data_loader = torch.utils.data.DataLoader(nanobarcode_dataset.val_set,
+                                                  batch_size=training_args["batch_size"])
 
-    val_loader = torch.utils.data.DataLoader(nanobarcode_dataset.val_set,
-                                             batch_size=training_args["batch_size"])
-
-    test_loader = torch.utils.data.DataLoader(nanobarcode_dataset.test_set,
-                                              batch_size=training_args["batch_size"])
+    test_data_loader = torch.utils.data.DataLoader(nanobarcode_dataset.test_set,
+                                                   batch_size=training_args["batch_size"])
 
     optimizer = optim.AdamW(net.parameters(), lr=training_args["lr"], amsgrad=True)
 
-    return net, train_loader, val_loader, test_loader, optimizer
+    return net, train_data_loader, val_data_loader, test_data_loader, optimizer
 
 
-def calc_metrics(net, data_loader, n_classes, full_output=False):
+def calc_metrics(net, data_loader, verbose=False) -> dict:
+
+    n_classes = 0
+
+    for i, data in enumerate(data_loader):
+        input_data, target_data = data
+        n_classes = max(n_classes, target_data.cpu().numpy().max() + 1)
+
+    if verbose:
+        print(f"Existence of {n_classes} classes was inferred from the data.")
 
     confusion_matrix = np.zeros((n_classes, n_classes), dtype=np.float64)
 
@@ -85,36 +94,34 @@ def calc_metrics(net, data_loader, n_classes, full_output=False):
     for i in range(confusion_matrix.shape[1]):
         confusion_matrix[:, i] /= np.sum(confusion_matrix[:, i])
 
-    true_positive = []
-    false_positive = []
-    false_negative = []
-
-    precision = []
-    recall = []
-    F1_score = []
+    metric = {"true positive": [], "false positive": [], "false negative": [],
+              "precision": [], "recall": [], "F1-score": []}
 
     for n in range(n_classes):
-        true_positive.append(confusion_matrix[n, n])
-        false_positive.append(np.sum(confusion_matrix[n, :]) - confusion_matrix[n, n])
-        false_negative.append(np.sum(confusion_matrix[:, n]) - confusion_matrix[n, n])
 
-        precision.append(true_positive[-1] / max(true_positive[-1] + false_positive[-1], 1.0E-16))
-        recall.append(true_positive[-1] / max(true_positive[-1] + false_negative[-1], 1.0E-16))
-        F1_score.append(2.0 * precision[-1] * recall[-1] / max(precision[-1] + recall[-1], 1.0E-16))
+        _true_positive = confusion_matrix[n, n]
+        _false_positive = np.sum(confusion_matrix[n, :]) - confusion_matrix[n, n]
+        _false_negative = np.sum(confusion_matrix[:, n]) - confusion_matrix[n, n]
+
+        _precision = _true_positive / max(_true_positive + _false_positive, 1.0E-16)
+        _recall = _true_positive / max(_true_positive + _false_negative, 1.0E-16)
+        _F1_score = 2.0 * _precision * _recall / max(_precision + _recall, 1.0E-16)
+
+        metric["true positive"].append(_true_positive)
+        metric["false positive"].append(_false_positive)
+        metric["false negative"].append(_false_negative)
+
+        metric["precision"].append(_precision)
+        metric["recall"].append(_recall)
+        metric["F1-score"].append(_F1_score)
 
     total_n_predictions = np.sum(confusion_matrix)
 
-    overall_accuracy = np.sum(confusion_matrix.diagonal()) / total_n_predictions
-    percent_false_positive = np.array(false_positive) / total_n_predictions
-    percent_false_negative = np.array(false_negative) / total_n_predictions
+    metric["overall accuracy"] = np.sum(confusion_matrix.diagonal()) / total_n_predictions
+    metric["percent false positive"] = np.array(metric["false positive"]) / total_n_predictions
+    metric["percent false negative"] = np.array(metric["false negative"]) / total_n_predictions
 
-    if full_output:
-
-        return overall_accuracy, precision, recall, F1_score, percent_false_positive, percent_false_negative
-
-    else:
-
-        return overall_accuracy
+    return metric
 
 
 def do_step(net, data_loader, loss_function, optimizer, do_train=True):
@@ -145,6 +152,68 @@ def do_step(net, data_loader, loss_function, optimizer, do_train=True):
     return np.mean(running_loss)
 
 
+def training_loop(net, train_data_loader, val_data_loader, optimizer,
+                  num_epochs=120, starting_epoch=0, allow_overfit_steps=10,
+                  losses=None, accuracies=None,
+                  save_checkpoint=True, starting_max_accuracy=0.0,
+                  save_net_file_name="../network_params/weights_generic.pth"):
+
+    loss_function = nn.CrossEntropyLoss()
+
+    lr0 = 0.0005
+
+    for param_group in optimizer.param_groups:
+        lr0 = param_group['lr']
+
+    lr_drop = 0.9
+    epochs_drop = 20
+
+    epoch = starting_epoch
+    overfit = 0
+
+    max_accuracy = starting_max_accuracy
+
+    if losses is None:
+        losses = {"training": [], "validation": [], "test": []}
+
+    if accuracies is None:
+        accuracies = {"training": [], "validation": [], "test": []}
+
+    while overfit < allow_overfit_steps and epoch < num_epochs:
+
+        epoch += 1
+
+        train_loss = do_step(net, train_data_loader, loss_function, optimizer, do_train=True)
+        val_loss = do_step(net, val_data_loader, loss_function, None, do_train=False)
+
+        if train_loss < 0.8 * val_loss:
+            overfit += 1
+            print("overfit alert!")
+
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = lr0 * lr_drop ** (np.floor((1.0 + float(epoch)) / epochs_drop))
+            print(f"lr = {param_group['lr']}")
+
+        train_metric = calc_metrics(net, train_data_loader)
+        val_metric = calc_metrics(net, val_data_loader)
+
+        if save_checkpoint and val_metric["overall accuracy"] > max_accuracy:
+            print("saved as the best version so far...")
+            torch.save(net.state_dict(), save_net_file_name)
+            max_accuracy = val_metric["overall accuracy"]
+
+        losses["training"].append(train_loss)
+        losses["validation"].append(val_loss)
+
+        accuracies["training"].append(train_metric["overall accuracy"])
+        accuracies["validation"].append(val_metric["overall accuracy"])
+
+        print("epoch: {:d} -- train loss : {:7.5f} -- validation loss : {:7.5f} -- validation accuracy : {:4.2f}%"
+              .format(epoch, train_loss, val_loss, val_metric["overall accuracy"] * 100.0))
+
+    return losses, accuracies
+
+
 def separate_args(args):
 
     model_args = args.copy()
@@ -169,6 +238,251 @@ def hyperparameter_optim_objective(args, loss_function, n_proteins):
 
         # test_loss = do_step(net, testloader, criterion, None, do_train=False)
 
-    avg_val_accuracy = calc_metrics(net, val_loader, n_proteins, full_output=False)
+    result = calc_metrics(net, val_loader)
 
-    return avg_val_accuracy
+    return result["overall accuracy"]
+
+
+def feed_to_network(net, image_slice_scaled):
+
+    normalizing_layer = nn.Softmax(dim=-1)
+
+    net.eval()
+
+    with torch.no_grad():
+
+        _im = image_slice_scaled.copy().reshape(dataset_handler.n_channels, -1).transpose().astype(np.float32)
+
+        input_data = torch.from_numpy(_im).float().to(network_components.nn_device)
+        raw_output = net(input_data)
+        predicted = normalizing_layer(raw_output).cpu().numpy()
+
+        entropy = np.mean(np.sum(-predicted * np.log(predicted + 1.0e-16), axis=1))
+
+    return predicted, entropy
+
+
+def feed_to_network_and_optimize_channel_scaling(net, image_slice_scaled, n_optim_iter):
+
+    _im = image_slice_scaled.copy().reshape(dataset_handler.n_channels, -1).transpose().astype(np.float32)
+
+    normalizing_layer = nn.Softmax(dim=-1)
+
+    uber_net = network_main.ContrastModifier().to(network_components.nn_device)
+    uber_optimizer = torch.optim.AdamW(uber_net.parameters(), lr=0.001, amsgrad=True)
+
+    uber_net.train()
+
+    net.eval()
+
+    _require_grad_list = []
+
+    for _param in net.parameters():
+        _require_grad_list.append((_param.requires_grad is True))
+        _param.requires_grad = False
+
+    input_data = torch.from_numpy(_im).float().to(network_components.nn_device)
+
+    entropy_list = []
+
+    for i in range(n_optim_iter):
+
+        uber_optimizer.zero_grad()
+
+        raw_output = net(uber_net(input_data))
+        predicted = normalizing_layer(raw_output)
+
+        entropy = torch.mean(torch.sum(-predicted * torch.log(predicted + 1.0e-16), dim=1))
+
+        entropy.backward()
+
+        uber_optimizer.step()
+
+        entropy_list.append(entropy.detach().cpu().numpy())
+
+    uber_net.eval()
+
+    with torch.no_grad():
+
+        raw_output = net(uber_net(input_data))
+
+        outputs = normalizing_layer(raw_output)
+
+        entropy = torch.mean(torch.sum(-outputs * torch.log(outputs + 1.0e-16), dim=1))
+
+        predicted = torch.round(outputs)
+
+    for _param, _rg in zip(net.parameters(), _require_grad_list):
+        _param.requires_grad = _rg
+
+    return predicted.cpu().numpy(), entropy.cpu().numpy(), entropy_list
+
+
+def crop_file_name(full_file_name):
+
+    last_slash_ind = len(full_file_name) - 1
+
+    while full_file_name[last_slash_ind] != "/":
+        last_slash_ind -= 1
+
+    cropped_name = full_file_name[last_slash_ind + 1:-4]
+
+    return cropped_name
+
+
+def predict_from_image_file(file_name, net, dataset, n_optim_iter=0,
+                            brightness_scaling_method="whitened", verbose=True) -> dict:
+    """
+    Performs prediction using NanobarcodeNet *net*
+    :param file_name: Filename for the image to be processed
+    :param net: Trained network model used for prediction
+    :type net: NanobarcodeClassifierNet
+    :param dataset: Dataset handler
+    :type dataset: dataset_handler.NanobarcodeDataset
+    :param n_optim_iter: Number of entropy enhancing training done
+    :param brightness_scaling_method: The method used for scaling brightness values
+            (see *image_processing.scale_brightness*)
+    :param verbose: If True, will print information
+    :type verbos: bool
+
+    :return: Dictionary of results
+    """
+
+    ind_filter = [0, 1, 2, 3, 5, 6, 7, 8, 9, 10]
+
+    cropped_filename = crop_file_name(file_name)
+
+    protein_colormap = image_processing.protein_colormap(dataset=dataset)
+    cell_color = np.array([0.3, 0.3, 0.3, 1.0])
+
+    protein_name = "UNKNOWN"
+
+    for _pr in dataset.protein_names:
+        if cropped_filename.find(_pr) != -1:
+            protein_name = _pr
+
+    if protein_name == "UNKNOWN" and cropped_filename.find("MOCK") != -1:
+        protein_name = "Blank"
+
+    if verbose:
+        if protein_name != "UNKNOWN":
+            print(f"Protein with name {protein_name} detected from filename!")
+        else:
+            print(f"Could not determine the protein name from filename.")
+
+    raw_image_from_file = tifffile.imread(file_name)
+
+    if raw_image_from_file.ndim == 3:
+        raw_image_stack = raw_image_from_file.copy().reshape((1, *raw_image_from_file.shape))
+    else:
+        raw_image_stack = raw_image_from_file.copy()
+
+    brightfield_stack = raw_image_stack[:, 4, :, :].copy().astype(np.float32)
+    raw_image_stack = raw_image_stack[:, ind_filter, :, :].copy().astype(np.float32)
+
+    segmentation_func = image_processing.KPCASeparate(raw_image_stack, threshold=0.95)
+    # raw_image_brightness = np.clip(improc.scale_image(np.sum(np.abs(raw_image_stack), axis=1), "linear"), 0.0, 1.0)
+
+    image_size = brightfield_stack.shape[1:]
+
+    false_color_stack = []
+    cell_halo_false_color_stack = []
+    unprocessed_false_color_stack = []
+    entropy_stack = []
+    entropy_iter_stack = []
+
+    # We consider the prediction precision in two steps:
+    #
+    #   1. The segmentation precision: are all the protein-containing pixels been correctly picked?
+    #      No matter the type of the protein.
+    #   2. The protein identification precision: is the protein in the image identified correctly?
+
+    correct_protein_pick_with_segmentation = 0.0
+    wrong_protein_pick_with_segmentation = 0.0
+
+    correct_protein_pick = 0.0
+    wrong_protein_pick = 0.0
+
+    for image_slice, brightfield_slice in zip(raw_image_stack, brightfield_stack):
+
+        if protein_name != "Blank":
+            segmented_foreground_mask = segmentation_func(image_slice)
+        else:
+            segmented_foreground_mask = np.ones(image_slice.shape[-2:])
+
+        segmented_background_mask = np.logical_not(segmented_foreground_mask)
+
+        image_slice_scaled = image_processing.scale_brightness(image_slice, brightness_scaling_method)
+
+        false_color_image = np.zeros((*image_size, 4))
+        unprocessed_false_color_image = np.zeros((*image_size, 4))
+
+        unprocessed_false_color_image[:, :, 3] = 1.0
+
+        predicted, entropy, entropy_iter = feed_to_network_and_optimize_channel_scaling(net,
+                                                                                        image_slice_scaled,
+                                                                                        n_optim_iter)
+
+        entropy_stack.append(entropy)
+        entropy_iter_stack.append(entropy_iter.copy())
+
+        for data_protein_name in dataset.protein_names:
+
+            protein_id = dataset.brightness_data[data_protein_name]["ID"]
+
+            predicted_foreground = predicted[:, protein_id].copy().reshape(image_size)
+            predicted_background = 1.0 - predicted_foreground
+
+            for ch in range(4):
+                false_color_image[:, :, ch] += predicted_foreground * protein_colormap[data_protein_name][ch]
+
+            # the intended protein in the single-transfect slice
+            if data_protein_name == protein_name:
+
+                correct_protein_pick_with_segmentation += np.sum(predicted_foreground * segmented_foreground_mask)
+                wrong_protein_pick_with_segmentation += np.sum(predicted_foreground * segmented_background_mask)
+
+                correct_protein_pick += np.sum(predicted_foreground)
+
+                # make a simple false-color image based on the
+                # brightness of the original images when the protein-name is known
+                for ch in range(3):
+                    unprocessed_false_color_image[:, :, ch] =\
+                        segmented_foreground_mask * protein_colormap[protein_name][ch]
+
+            elif data_protein_name != 'Blank':
+
+                wrong_protein_pick_with_segmentation += np.sum(predicted_foreground)
+                wrong_protein_pick += np.sum(predicted_foreground)
+
+        #             false_color_image = scale_image_linear(false_color_image)
+
+        #         plt.imshow(brightfield_slice, cmap='bone')
+        #         plt.axis('off')
+
+        # Getting the cell halos from the bright-field image
+        cell_halo = image_processing.scale_brightness(image_processing.get_cell_background(brightfield_slice), "linear")
+
+        cell_halo_false_color_image = false_color_image.copy()
+
+        for ch in range(4):
+            cell_halo_false_color_image[:, :, ch] += cell_halo[:, :] * cell_color[ch]
+
+        false_color_image = np.clip(false_color_image, 0.0, 1.0)
+        cell_halo_false_color_image = np.clip(cell_halo_false_color_image, 0.0, 1.0)
+
+        false_color_stack.append(false_color_image.copy())
+        cell_halo_false_color_stack.append(cell_halo_false_color_image.copy())
+        unprocessed_false_color_stack.append(unprocessed_false_color_image.copy())
+
+    result = {"cropped filename": cropped_filename, "protein name": protein_name,
+              "false-color stack": (np.array(false_color_stack) * 65535.0).astype(np.uint16),
+              "cell-halo false-color stack": (np.array(cell_halo_false_color_stack) * 65535.0).astype(np.uint16),
+              "unprocessed false-color stack": (np.array(unprocessed_false_color_stack) * 65535.0).astype(np.uint16),
+              "entropy": np.array(entropy_stack), "iterative entropy": np.array(entropy_iter_stack),
+              "precision (with segmentation)": correct_protein_pick_with_segmentation / (
+                      correct_protein_pick_with_segmentation + wrong_protein_pick_with_segmentation),
+              "precision": correct_protein_pick / (correct_protein_pick + wrong_protein_pick)}
+
+    return result
+
