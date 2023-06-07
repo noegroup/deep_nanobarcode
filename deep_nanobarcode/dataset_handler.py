@@ -55,7 +55,8 @@ class IterableDatasetAugmentor(torch.utils.data.IterableDataset):
         return x
 
     def augment_brightness(self, x):
-        return x * (1.0 + (2.0 * torch.rand(size=x.size(), device=network_components.nn_device) - 1.0) * self.brightness_scaling_factor)
+        return x * (1.0 + (2.0 * torch.rand(size=x.size(), device=network_components.nn_device) - 1.0) *
+                    self.brightness_scaling_factor)
 
     def __iter__(self):
 
@@ -108,11 +109,15 @@ class DatasetAugmentor(torch.utils.data.Dataset):
         print(f"Standard deviation of the input data = {self.dataset_std}")
 
         data, target = self.dataset[0]
-        print(f"Example of augmented data = {DatasetAugmentor.augment_func(data, self.brightness_scaling_factor), target}")
+        print(f"Example of augmented data =\
+         {DatasetAugmentor.augment_func(data, self.brightness_scaling_factor), target}")
 
     @staticmethod
     def augment_func(x, _scale):
-        return x * (1.0 + (torch.rand(size=x.size(), device=network_components.nn_device) - 0.5) * _scale)
+
+        _mu = torch.mean(x)
+
+        return (x - _mu) * (1.0 + (torch.rand(size=x.size(), device=network_components.nn_device) - 0.5) * _scale) + _mu
 
     def __getitem__(self, index):
 
@@ -146,6 +151,8 @@ class NanobarcodeDataset:
 
         self.brightness_data, self.protein_names, \
             self.channel_mean, self.channel_std = self.load_brightness_data(brightness_data_file_name, verbose)
+
+        print(f"protein names = {self.protein_names}")
 
         self.id_to_protein_name = [""] * len(self.protein_names)
 
@@ -222,8 +229,12 @@ class NanobarcodeDataset:
 
         for _type in ["train", "val", "test"]:
 
-            dataset[_type] = {"input": torch.empty((0, n_channels), dtype=torch.float32, device=network_components.nn_device),
-                              "target": torch.empty(0, dtype=torch.long, device=network_components.nn_device)}
+            dataset[_type] = {"input": torch.empty((0, n_channels),
+                                                   dtype=torch.float32,
+                                                   device=network_components.nn_device),
+                              "target": torch.empty(0,
+                                                    dtype=torch.long,
+                                                    device=network_components.nn_device)}
 
         split_crit = np.cumsum(train_val_test_split_frac)
 

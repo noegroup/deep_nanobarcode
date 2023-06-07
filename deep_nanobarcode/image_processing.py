@@ -201,11 +201,11 @@ def get_cell_background(brightfield_image):
 
     bff *= window
 
-    brightfield_image_enhanced = scale_brightness (
+    brightfield_image_enhanced = scale_brightness(
         np.exp(-scale_brightness(np.real(np.fft.ifft2(bff)), "linear") ** 2 / 0.2), "linear")
 
     seed = np.copy(brightfield_image_enhanced)
-    seed[1:-1, 1:-1] = brightfield_image_enhanced.min()
+    seed[1:-1, 1:-1] = brightfield_image_enhanced.min(initial=0.0)
     mask = brightfield_image_enhanced
 
     dilated = skmorph.reconstruction(seed, mask, method='dilation')

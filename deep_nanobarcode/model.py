@@ -23,8 +23,7 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
-
-
+import matplotlib.pyplot
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -44,9 +43,10 @@ def model_factory(nanobarcode_dataset, model_args, training_args):
                                                 output_shape=nanobarcode_dataset.n_proteins,
                                                 **model_args).to(network_components.nn_device)
 
-    #torch.multiprocessing.set_start_method("spawn")
+    # torch.multiprocessing.set_start_method("spawn")
 
-    extra_kwarg = {"shuffle": True, "drop_last": False}# {"num_workers": training_args["num_data_workers"]}
+    extra_kwarg = {"shuffle": True, "drop_last": False}
+    # {"num_workers": training_args["num_data_workers"]}
 
     train_data_loader = torch.utils.data.DataLoader(nanobarcode_dataset.train_set,
                                                     batch_size=training_args["batch_size"],
@@ -211,7 +211,7 @@ def training_loop(net, train_data_loader, val_data_loader, optimizer,
         print("epoch: {:d} -- train loss : {:7.5f} -- validation loss : {:7.5f} -- validation accuracy : {:4.2f}%"
               .format(epoch, train_loss, val_loss, val_metric["overall accuracy"] * 100.0))
 
-    return losses, accuracies
+    return losses, accuracies, epoch
 
 
 def separate_args(args):
@@ -229,7 +229,7 @@ def separate_args(args):
     return model_args, training_args
 
 
-def hyperparameter_optim_objective(args, loss_function, n_proteins):
+def hyperparameter_optim_objective(args, loss_function):
 
     net, train_loader, val_loader, test_loader, optimizer = model_factory(*separate_args(args))
 
@@ -343,7 +343,7 @@ def predict_from_image_file(file_name, net, dataset, n_optim_iter=0,
     :param brightness_scaling_method: The method used for scaling brightness values
             (see *image_processing.scale_brightness*)
     :param verbose: If True, will print information
-    :type verbos: bool
+    :type verbose: bool
 
     :return: Dictionary of results
     """
@@ -431,7 +431,7 @@ def predict_from_image_file(file_name, net, dataset, n_optim_iter=0,
             protein_id = dataset.brightness_data[data_protein_name]["ID"]
 
             predicted_foreground = predicted[:, protein_id].copy().reshape(image_size)
-            predicted_background = 1.0 - predicted_foreground
+            # predicted_background = 1.0 - predicted_foreground
 
             for ch in range(4):
                 false_color_image[:, :, ch] += predicted_foreground * protein_colormap[data_protein_name][ch]
@@ -480,9 +480,100 @@ def predict_from_image_file(file_name, net, dataset, n_optim_iter=0,
               "cell-halo false-color stack": (np.array(cell_halo_false_color_stack) * 65535.0).astype(np.uint16),
               "unprocessed false-color stack": (np.array(unprocessed_false_color_stack) * 65535.0).astype(np.uint16),
               "entropy": np.array(entropy_stack), "iterative entropy": np.array(entropy_iter_stack),
-              "precision (with segmentation)": correct_protein_pick_with_segmentation / (
-                      correct_protein_pick_with_segmentation + wrong_protein_pick_with_segmentation),
-              "precision": correct_protein_pick / (correct_protein_pick + wrong_protein_pick)}
+              "precision (with segmentation)": correct_protein_pick_with_segmentation / max(
+                      correct_protein_pick_with_segmentation + wrong_protein_pick_with_segmentation, 1.0E-16),
+              "precision": correct_protein_pick / max(correct_protein_pick + wrong_protein_pick, 1.0E-16)}
 
     return result
 
+
+def render_tomogram(false_image_color_stack, figure, pixel_size_z):
+
+    assert false_image_color_stack.shape[1] == false_image_color_stack.shape[2]
+    assert isinstance(figure, matplotlib.pyplot.Figure)
+
+    xx, yy = np.meshgrid(np.linspace(0.0, 1.0, false_image_color_stack.shape[1]),
+                         np.linspace(0.0, 1.0, false_image_color_stack.shape[2]))
+
+    ax = figure.add_subplot(projection='3d', frame_on=True)
+
+    figure.subplots_adjust(top=1.0, bottom=0.0, left=0.0, right=1.0, wspace=0.0, hspace=0.0)
+
+    z = 0.0
+
+    # pixel size in x and y direction is 300 nm
+    dz = 1.0 / float(false_image_color_stack.shape[1]) * pixel_size_z / 300.0  # * 0.5
+    # dz = 0.03 * 17.0 / float(false_color_stack.shape[0])
+
+    ax.set_facecolor('black')
+
+    _box_color = 'white'
+
+    _z = 0.0
+
+    ax.plot3D([0.0, 0.0], [0.0, 1.0], [_z, _z], color=_box_color, zorder=-1)
+    ax.plot3D([0.0, 1.0], [1.0, 1.0], [_z, _z], color=_box_color, zorder=-1)
+    ax.plot3D([1.0, 1.0], [1.0, 0.0], [_z, _z], color=_box_color, zorder=-1)
+    ax.plot3D([1.0, 0.0], [0.0, 0.0], [_z, _z], color=_box_color, zorder=-1)
+
+    px = np.empty(0)
+    py = np.empty(0)
+    pz = np.empty(0)
+    pc = np.empty((0, 4))
+
+    last_z_order = 0
+
+    for _zorder, _image in enumerate(false_image_color_stack[:, :, :, :]):
+
+        _color = _image.copy().astype(np.float64) / 65535.0
+
+        valid = np.sum(_color[:, :, :3], axis=2) > 0.1
+
+        zz = np.ones_like(xx) * z
+
+        # print(float(zz[valid].shape[0]) / float(np.prod(zz.shape)))
+
+        ax.plot3D([0.0, 0.0], [0.0, 0.0], [z, z + dz], color=_box_color, zorder=_zorder)
+        ax.plot3D([0.0, 0.0], [1.0, 1.0], [z, z + dz], color=_box_color, zorder=_zorder)
+        ax.plot3D([1.0, 1.0], [1.0, 1.0], [z, z + dz], color=_box_color, zorder=_zorder)
+        ax.plot3D([1.0, 1.0], [0.0, 0.0], [z, z + dz], color=_box_color, zorder=_zorder)
+
+        z += dz
+
+        px = np.concatenate((px, xx[valid]))
+        py = np.concatenate((py, yy[valid]))
+        pz = np.concatenate((pz, zz[valid]))
+        pc = np.concatenate((pc, _color[valid]), axis=0)
+
+        last_z_order = _zorder
+
+    ax.scatter3D(px, py, pz,
+                 c=pc,
+                 edgecolor='none',
+                 marker='.', s=4.0, alpha=0.5,
+                 depthshade=True, zorder=last_z_order)
+
+    _z = z
+
+    # print(f"max z = {z * float(false_color_stack.shape[1])} pixels")
+
+    ax.plot3D([0.0, 0.0], [0.0, 1.0], [_z, _z], color=_box_color, zorder=_zorder + 2)
+    ax.plot3D([0.0, 1.0], [1.0, 1.0], [_z, _z], color=_box_color, zorder=_zorder + 2)
+    ax.plot3D([1.0, 1.0], [1.0, 0.0], [_z, _z], color=_box_color, zorder=_zorder + 2)
+    ax.plot3D([1.0, 0.0], [0.0, 0.0], [_z, _z], color=_box_color, zorder=_zorder + 2)
+
+    ax.set_xlim(-0.01, 1.01)
+    ax.set_ylim(-0.01, 1.01)
+    ax.set_zlim(-0.51, 0.51)
+    ax.set_axis_off()
+
+    # scale = np.diag([1.0, 1.0, 0.1, 1.0])
+
+    # def short_proj ():
+    #    return np.dot(Axes3D.get_proj(ax), scale)
+
+    # ax.get_proj = short_proj
+    ax.view_init(20, 40)
+    ax.dist = 9.0
+
+    ax.set_rasterized(True)

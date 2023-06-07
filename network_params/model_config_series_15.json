@@ -4,7 +4,7 @@
     "resnet_stride": 3,
     "cardinality": 4,
     "batch_size": 458,
-    "lr": 0.00014860544347674695,
+    "lr": 0.0005,
     "num_data_workers": 8,
     "use_resnet": true,
     "use_dropout": false,
