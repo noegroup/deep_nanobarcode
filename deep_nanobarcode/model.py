@@ -378,7 +378,7 @@ def predict_from_image_file(file_name, net, dataset, n_optim_iter=0,
         raw_image_stack = raw_image_from_file.copy()
 
     brightfield_stack = raw_image_stack[:, 4, :, :].copy().astype(np.float32)
-    raw_image_stack = raw_image_stack[:, ind_filter, :, :].copy().astype(np.float32)
+    raw_image_stack = image_processing.scale_brightness(raw_image_stack[:, ind_filter, :, :].copy().astype(np.float32))
 
     segmentation_func = image_processing.KPCASeparate(raw_image_stack, threshold=0.95)
     # raw_image_brightness = np.clip(improc.scale_image(np.sum(np.abs(raw_image_stack), axis=1), "linear"), 0.0, 1.0)
@@ -412,16 +412,12 @@ def predict_from_image_file(file_name, net, dataset, n_optim_iter=0,
 
         segmented_background_mask = np.logical_not(segmented_foreground_mask)
 
-        image_slice_scaled = image_processing.scale_brightness(image_slice, brightness_scaling_method)
-
         false_color_image = np.zeros((*image_size, 4))
         unprocessed_false_color_image = np.zeros((*image_size, 4))
 
         unprocessed_false_color_image[:, :, 3] = 1.0
 
-        predicted, entropy, entropy_iter = feed_to_network_and_optimize_channel_scaling(net,
-                                                                                        image_slice_scaled,
-                                                                                        n_optim_iter)
+        predicted, entropy, entropy_iter = feed_to_network_and_optimize_channel_scaling(net, image_slice, n_optim_iter)
 
         entropy_stack.append(entropy)
         entropy_iter_stack.append(entropy_iter.copy())
