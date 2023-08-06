@@ -381,6 +381,9 @@ def predict_from_image_file(file_name, net, dataset, n_optim_iter=0,
     brightfield_stack = raw_image_stack[:, 4, :, :].copy().astype(np.float32)
     raw_image_stack = raw_image_stack[:, ind_filter, :, :].copy().astype(np.float32)
 
+    if raw_image_stack.shape[2] > 1024 or raw_image_stack.shape[3] > 1024:
+        raise OverflowError("image two large for processing! \n please contact the author for updates.")
+
     segmentation_func = image_processing.KPCASeparate(raw_image_stack, threshold=0.95)
     # raw_image_brightness = np.clip(improc.scale_image(np.sum(np.abs(raw_image_stack), axis=1), "linear"), 0.0, 1.0)
 

@@ -182,10 +182,19 @@ class KPCASeparate(object):
 
         image_wt = (image.copy() - np.mean(image)) / np.std(image)
 
-        segmented_pixels = self.model.transform(image_wt.reshape((n_channels, -1)).T)
+        try:
+            segmented_pixels = self.model.transform(image_wt.reshape((n_channels, -1)).T)
 
-        binary_mask = ((segmented_pixels[:, 0] - self.y_min) > self.threshold *
-                       (self.y_max - self.y_min)).reshape(image_dim)
+            binary_mask = ((segmented_pixels[:, 0] - self.y_min) > self.threshold *
+                           (self.y_max - self.y_min)).reshape(image_dim)
+        except MemoryError:
+            print("couldn't allocate memory for kPCA segmentation!")
+            print("using simple thresholding...")
+
+            abs_brightness = np.sum(np.abs(image_wt), axis=0)
+            abs_brightness = (abs_brightness - abs_brightness.mean()) / abs_brightness.std()
+
+            binary_mask = (abs_brightness > 2.5).reshape(image_dim)
 
         return binary_mask
 
