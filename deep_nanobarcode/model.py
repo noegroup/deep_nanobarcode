@@ -332,7 +332,9 @@ def crop_file_name(full_file_name):
 
 
 def predict_from_image_file(file_name, net, dataset, n_optim_iter=0,
-                            brightness_scaling_method="whitened", verbose=True) -> dict:
+                            brightness_scaling_method="whitened",
+                            z_stack_averaging=False,
+                            verbose=True) -> dict:
     """
     Performs prediction using NanobarcodeNet *net*
     :param file_name: Filename for the image to be processed
@@ -343,6 +345,8 @@ def predict_from_image_file(file_name, net, dataset, n_optim_iter=0,
     :param n_optim_iter: Number of entropy enhancing training done
     :param brightness_scaling_method: The method used for scaling brightness values
             (see *image_processing.scale_brightness*)
+    :param z_stack_averaging: If True, the z-stack will be collapsed and substituted by the average value
+    :type z_stack_averaging: bool
     :param verbose: If True, will print information
     :type verbose: bool
 
@@ -381,13 +385,17 @@ def predict_from_image_file(file_name, net, dataset, n_optim_iter=0,
     brightfield_stack = raw_image_stack[:, 4, :, :].copy().astype(np.float32)
     raw_image_stack = raw_image_stack[:, ind_filter, :, :].copy().astype(np.float32)
 
+    image_size = brightfield_stack.shape[1:]
+
+    if z_stack_averaging:
+        brightfield_stack = np.mean(brightfield_stack, axis=0).reshape((1, *brightfield_stack.shape[1:]))
+        raw_image_stack = np.mean(raw_image_stack, axis=0).reshape((1, *raw_image_stack.shape[1:]))
+
     if raw_image_stack.shape[2] > 1024 or raw_image_stack.shape[3] > 1024:
         raise OverflowError("image two large for processing! \n please contact the author for updates.")
 
     segmentation_func = image_processing.KPCASeparate(raw_image_stack, threshold=0.95)
     # raw_image_brightness = np.clip(improc.scale_image(np.sum(np.abs(raw_image_stack), axis=1), "linear"), 0.0, 1.0)
-
-    image_size = brightfield_stack.shape[1:]
 
     false_color_stack = []
     cell_halo_false_color_stack = []
@@ -407,7 +415,8 @@ def predict_from_image_file(file_name, net, dataset, n_optim_iter=0,
     correct_protein_pick = 0.0
     wrong_protein_pick = 0.0
 
-    for image_slice, brightfield_slice in tqdm(zip(image_processing.scale_brightness(raw_image_stack, brightness_scaling_method),
+    for image_slice, brightfield_slice in tqdm(zip(image_processing.scale_brightness(raw_image_stack,
+                                                                                     brightness_scaling_method),
                                                brightfield_stack), total=raw_image_stack.shape[0]):
 
         if protein_name != "Blank":
