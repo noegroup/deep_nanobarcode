@@ -30,7 +30,7 @@ import torch.optim as optim
 import torch.multiprocessing
 import numpy as np
 import tifffile
-from tqdm.notebook import tqdm
+from tqdm import tqdm
 
 from . import network_components
 from . import network_main
